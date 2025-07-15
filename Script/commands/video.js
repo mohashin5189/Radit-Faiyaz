@@ -1,134 +1,174 @@
-const axios = require('axios');
+const axios = require("axios");
 const fs = require('fs');
-const path = require('path');
 
-module.exports.config = {
- name: "add",
- version: "6.1.0",
- hasPermission: 0,
- credits: "Shaon",
- description: "Send a random sad video with strong bad word filter, admin notification (group + 2 admin inbox), and warning system",
- commandCategory: "media",
- usages: "",
- cooldowns: 5
+const baseApiUrl = async () => {
+  const base = await axios.get("https://raw.githubusercontent.com/Blankid018/D1PT0/main/baseApiUrl.json");
+  return base.data.api;
 };
 
-// ✅ Admin IDs বসাও
-const adminID = ["100063460095373", "100015168369582"];
+module.exports = {
+  config: {
+    name: "video",
+    version: "1.1.4",
+    credits: "dipto", //fixed by Ullash 
+    countDown: 5,
+    hasPermssion: 0,
+    description: "Download video, audio, and info from YouTube",
+    category: "media",
+    commandCategory: "media",
+    usePrefix: true,
+    prefix: true,
+    usages:
+      " {pn} [video|-v] [<video name>|<video link>]\n" +
+      " {pn} [audio|-a] [<video name>|<video link>]\n" +
+      " {pn} [info|-i] [<video name>|<video link>]\n" +
+      "Example:\n" +
+      "{pn} -v chipi chipi chapa chapa\n" +
+      "{pn} -a chipi chipi chapa chapa\n" +
+      "{pn} -i chipi chipi chapa chapa"
+  },
 
-// ✅ Warning Data File (cache folder)
-const warningFile = path.join(__dirname, 'cache', 'warnings.json');
+  run: async ({ api, args, event }) => {
+    const { threadID, messageID, senderID } = event;
 
-// ✅ Warning File Create if not exists
-if (!fs.existsSync(path.dirname(warningFile))) {
- fs.mkdirSync(path.dirname(warningFile), { recursive: true });
-}
-if (!fs.existsSync(warningFile)) {
- fs.writeFileSync(warningFile, JSON.stringify({}, null, 2));
-}
+    let action = args[0] ? args[0].toLowerCase() : '-v';
 
-// ✅ Load & Save Warning Functions
-function loadWarnings() {
- return JSON.parse(fs.readFileSync(warningFile));
-}
-function saveWarnings(warnings) {
- fs.writeFileSync(warningFile, JSON.stringify(warnings, null, 2));
-}
+    if (!['-v', 'video', 'mp4', '-a', 'audio', 'mp3', '-i', 'info'].includes(action)) {
+      args.unshift('-v');
+      action = '-v';
+    }
 
-module.exports.run = async ({ api, event, args }) => {
- try {
- const imageUrl = event.messageReply?.attachments[0]?.url;
- const videoName = args.join(" ").trim();
- const senderID = event.senderID;
- const threadID = event.threadID;
+    const checkurl = /^(?:https?:\/\/)?(?:m\.|www\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))((\w|-){11})(?:\S+)?$/;
+    const urlYtb = args[1] ? checkurl.test(args[1]) : false;
 
- if (!imageUrl) {
- return api.sendMessage("⚠️ Please reply to an image or video to add.", threadID, event.messageID);
- }
+    if (urlYtb) {
+      const format = ['-v', 'video', 'mp4'].includes(action) ? 'mp4'
+        : ['-a', 'audio', 'mp3'].includes(action) ? 'mp3' : null;
 
- if (!videoName) {
- return api.sendMessage("⚠️ Please provide a name for the video.", threadID, event.messageID);
- }
+      if (!format) return api.sendMessage('❌ Invalid format. Use -v for video or -a for audio.', threadID, messageID);
 
- // ✅ Load Warnings
- let warnings = loadWarnings();
- if (!warnings[senderID]) warnings[senderID] = 0;
+      try {
+        const match = args[1].match(checkurl);
+        const videoID = match ? match[1] : null;
+        if (!videoID) return api.sendMessage('❌ Invalid YouTube link.', threadID, messageID);
 
- // ✅ Bad Word Filter
- const badWords = [
- "fuck", "sex", "porn", "nude", "bitch", "cum", "dick", "pussy", "asshole", "boobs", "blowjob", "hentai", "xxx", "rape", "hotgirl", "hotboy",
- "anal", "oral", "tits", "slut", "whore", "nangi", "naked", "desisex", "desi porn", "indian porn", "child porn", "pedo", "child abuse",
- "গুদ", "চোদা", "চোদ", "চুদ", "চুদি", "চোদন", "মাগী", "মাগি", "বেশ্যা", "শুয়োর", "মাদারচোদ", "বাপচোদ", "মা চোদ", "বোন চোদ", "ফাক", "সেক্স", "পর্ন", "হেন্তাই"
- ];
+        const path = `ytb_${format}_${videoID}.${format}`;
+        const { data: { title, downloadLink, quality } } = await axios.get(`${await baseApiUrl()}/ytDl3?link=${videoID}&format=${format}&quality=3`);
 
- const pattern = badWords.map(word => {
- return word.split('').map(ch => `[${ch}]+`).join('[\\s\\.\\-\\_]*');
- }).join('|');
+        await api.sendMessage({
+          body: `• Title: ${title}\n• Quality: ${quality}`,
+          attachment: await downloadFile(downloadLink, path)
+        }, threadID, () => fs.unlinkSync(path), messageID);
 
- const regex = new RegExp(pattern, 'i');
+        return;
+      } catch (e) {
+        console.error(e);
+        return api.sendMessage('❌ Failed to download. Please try again later.', threadID, messageID);
+      }
+    }
 
- // ✅ If bad word detected
- if (regex.test(videoName)) {
- warnings[senderID] += 1;
- saveWarnings(warnings);
+    args.shift(); 
+    const keyWord = args.join(" ");
+    if (!keyWord) return api.sendMessage('❌ Please provide a search keyword.', threadID, messageID);
 
- const warningMsg = `❌ This name contains inappropriate words.\n⚠️ Warning: ${warnings[senderID]}/3\n🛑 If you reach 3 warnings, action will be taken.`;
- const adminMsg = `🚫 BAD WORD DETECTED!\n👤 User ID: ${senderID}\n💬 Tried Name: ${videoName}\n📍 Thread ID: ${threadID}\n⚠️ Current Warning: ${warnings[senderID]}/3`;
+    try {
+      const searchResult = (await axios.get(`${await baseApiUrl()}/ytFullSearch?songName=${encodeURIComponent(keyWord)}`)).data.slice(0, 6);
+      if (!searchResult.length) return api.sendMessage(`⭕ No results for keyword: ${keyWord}`, threadID, messageID);
 
- // 🔔 Notify in Group
- api.sendMessage(warningMsg, threadID, event.messageID);
+      let msg = "";
+      const thumbnails = [];
+      let i = 1;
 
- // 🔔 Notify to Admins
- adminID.forEach(id => {
- api.sendMessage(adminMsg, id, (err) => {
- if (err) console.log(`❌ Failed to send admin notification to ${id}:`, err);
- });
- });
+      for (const info of searchResult) {
+        thumbnails.push(streamImage(info.thumbnail, `thumbnail_${i}.jpg`));
+        msg += `${i++}. ${info.title}\nTime: ${info.time}\nChannel: ${info.channel.name}\n\n`;
+      }
 
- // ❌ Auto Block after 3 warnings
- if (warnings[senderID] >= 3) {
- api.sendMessage(`🚫 User ${senderID} has been BLOCKED due to 3 warnings.`, threadID);
- api.blockUser(senderID); // ✅ Block user (if supported)
- }
+      api.sendMessage({
+        body: msg + "👉 Reply to this message with a number to select.",
+        attachment: await Promise.all(thumbnails)
+      }, threadID, (err, info) => {
+        if (err) return console.error(err);
+        global.client.handleReply.push({
+          name: module.exports.config.name,
+          messageID: info.messageID,
+          author: senderID,
+          result: searchResult,
+          action
+        });
+      }, messageID);
+    } catch (err) {
+      console.error(err);
+      return api.sendMessage("❌ An error occurred while searching: " + err.message, threadID, messageID);
+    }
+  },
 
- return;
- }
+  handleReply: async ({ event, api, handleReply }) => {
+    const { threadID, messageID, senderID, body } = event;
 
- // ✅ Choose API based on video duration
- const apis = await axios.get('https://raw.githubusercontent.com/shaonproject/Shaon/main/api.json');
- const baseAPI = apis.data.api;
- const imgurAPI = apis.data.imgur;
+    if (senderID !== handleReply.author) return;
+    const { result, action } = handleReply;
+    const choice = parseInt(body);
 
- // Guess duration from Facebook API response (if possible)
- const isVideo = event.messageReply?.attachments[0]?.type === "video";
- const duration = event.messageReply?.attachments[0]?.duration || 0;
+    if (isNaN(choice) || choice <= 0 || choice > result.length)
+      return api.sendMessage("❌ Invalid number. Please reply with a valid number.", threadID, messageID);
 
- let finalUrl;
+    const selectedVideo = result[choice - 1];
+    const videoID = selectedVideo.id;
 
- if (isVideo && duration > 60) {
- // Use Catbox
- const catRes = await axios.get(`${imgurAPII}/catbox?url=${encodeURIComponent(imageUrl)}`);
- finalUrl = catRes.data.url || catRes.data.link;
- } else {
- // Use Imgur
- const imgurRes = await axios.get(`${imgurAPI}/imgur?link=${encodeURIComponent(imageUrl)}`);
- finalUrl = imgurRes.data.uploaded?.image || imgurRes.data.link;
- }
+    try {
+      await api.unsendMessage(handleReply.messageID);
+    } catch (e) {
+      console.error("Unsend failed:", e);
+    }
 
- if (!finalUrl) {
- return api.sendMessage("❌ মিডিয়া আপলোড ব্যর্থ হয়েছে।", threadID, event.messageID);
- }
+    if (['-v', 'video', 'mp4', '-a', 'audio', 'mp3', 'music'].includes(action)) {
+      const format = ['-v', 'video', 'mp4'].includes(action) ? 'mp4' : 'mp3';
+      try {
+        const path = `ytb_${format}_${videoID}.${format}`;
+        const { data: { title, downloadLink, quality } } = await axios.get(`${await baseApiUrl()}/ytDl3?link=${videoID}&format=${format}&quality=3`);
 
- // ✅ Store into DB
- const response = await axios.get(`${baseAPI}/video/random?name=${encodeURIComponent(videoName)}&url=${encodeURIComponent(finalUrl)}`);
+        await api.sendMessage({
+          body: `• Title: ${title}\n• Quality: ${quality}`,
+          attachment: await downloadFile(downloadLink, path)
+        }, threadID, () => fs.unlinkSync(path), messageID);
+      } catch (e) {
+        console.error(e);
+        return api.sendMessage('❌ Failed to download. Please try again later.', threadID, messageID);
+      }
+    }
 
- api.sendMessage(
- `💌MESSAGE: URL ADDED SUCCESSFULLY\n🟡NAME: ${response.data.name}\n🖇️URL: ${response.data.url}`,
- threadID,
- event.messageID
- );
- } catch (e) {
- console.log(e);
- api.sendMessage(`An error occurred: ${e.message}`, event.threadID, event.messageID);
- }
+    if (action === '-i' || action === 'info') {
+      try {
+        const { data } = await axios.get(`${await baseApiUrl()}/ytfullinfo?videoID=${videoID}`);
+        await api.sendMessage({
+          body: `✨ Title: ${data.title}\n⏳ Duration: ${(data.duration / 60).toFixed(2)} mins\n📺 Resolution: ${data.resolution}\n👀 Views: ${data.view_count}\n👍 Likes: ${data.like_count}\n💬 Comments: ${data.comment_count}\n📂 Category: ${data.categories[0]}\n📢 Channel: ${data.channel}\n🧍 Uploader ID: ${data.uploader_id}\n👥 Subscribers: ${data.channel_follower_count}\n🔗 Channel URL: ${data.channel_url}\n🔗 Video URL: ${data.webpage_url}`,
+          attachment: await streamImage(data.thumbnail, 'info_thumb.jpg')
+        }, threadID, messageID);
+      } catch (e) {
+        console.error(e);
+        return api.sendMessage('❌ Failed to retrieve video info.', threadID, messageID);
+      }
+    }
+  }
 };
+
+async function downloadFile(url, pathName) {
+  try {
+    const res = await axios.get(url, { responseType: "arraybuffer" });
+    fs.writeFileSync(pathName, Buffer.from(res.data));
+    return fs.createReadStream(pathName);
+  } catch (err) {
+    throw err;
+  }
+}
+
+async function streamImage(url, pathName) {
+  try {
+    const response = await axios.get(url, { responseType: "stream" });
+    response.data.path = pathName;
+    return response.data;
+  } catch (err) {
+    throw err;
+  }
+}
